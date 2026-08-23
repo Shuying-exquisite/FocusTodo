@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:;" />
+<title>FocusTodo 待办清单</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div id="app">
+
+  <!-- ========== 侧边栏 ========== -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-logo">✓</div>
+      <div class="brand-text">
+        <div class="brand-name">FocusTodo</div>
+        <div class="brand-sub">专注待办清单</div>
+      </div>
+    </div>
+
+    <button class="sidebar-handle" id="btnCollapseSidebar" title="收起侧边栏" aria-label="收起侧边栏">◀</button>
+
+    <nav class="smart-views" id="smartViews">
+      <button class="nav-item" data-view="star"><span class="ni-ico">⭐</span><span class="ni-label">重要</span><span class="ni-count" data-count="star"></span></button>
+      <button class="nav-item" data-view="done"><span class="ni-ico">✅</span><span class="ni-label">已完成</span><span class="ni-count" data-count="done"></span></button>
+      <button class="nav-item" data-view="archived"><span class="ni-ico">📦</span><span class="ni-label">存档</span><span class="ni-count" data-count="archived"></span></button>
+    </nav>
+
+    <div class="side-section-title">
+      <span>任务表</span>
+      <button class="icon-btn tiny" id="btnAddList" title="新建任务表">＋</button>
+    </div>
+    <div class="lists-scroll"><ul class="list-nav" id="listNav"></ul></div>
+
+    <div class="sidebar-footer">
+      <button class="side-btn accent" id="btnPomodoro">
+        <span class="pomo-emoji">🍅</span><span class="pomo-label"> 番茄时钟</span>
+      </button>
+      <div class="footer-row">
+        <button class="icon-btn" id="btnToolbox" title="工具箱">🔧</button>
+        <button class="icon-btn" id="btnTheme" title="切换主题">🌙</button>
+        <button class="icon-btn" id="btnSettings" title="设置">⚙️</button>
+        <button class="icon-btn" id="btnStats" title="统计">📊</button>
+        <div class="mini-pomo" id="miniPomo" hidden><span class="dot"></span><span id="miniPomoTime">25:00</span></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ========== 主区域 ========== -->
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-left">
+        <h1 id="viewTitle">今天</h1>
+        <div class="view-sub" id="viewSub">0 个任务</div>
+      </div>
+      <div class="topbar-right">
+        <div class="search-box">
+          <span class="search-ico">🔍</span>
+          <input type="text" id="searchInput" placeholder="搜索任务 / 步骤 / 备注…" />
+        </div>
+        <button class="icon-btn" id="btnListInfo" title="任务表备注与材料">📎</button>
+        <button class="icon-btn" id="btnSort" title="排序">↕️</button>
+        <button class="icon-btn" id="btnToggleDone" title="显示/隐藏已完成">👁️</button>
+        <button class="icon-btn" id="btnResetRecurring" title="一键重置重复任务">🔄</button>
+      </div>
+    </header>
+
+    <div class="progress-bar-wrap"><div class="progress-bar" id="progressBar"></div></div>
+
+    <div class="task-scroll">
+      <div class="task-list" id="taskList"></div>
+      <div class="empty-state" id="emptyState" hidden>
+        <div class="empty-ico">🗂️</div>
+        <div class="empty-title">这里还没有任务</div>
+        <div class="empty-sub">点击下方“添加任务”按钮创建第一个任务吧</div>
+      </div>
+      <button class="add-task-fab" id="btnAddTask" title="添加新任务（台前调度）">
+        <span class="fab-ico">＋</span>
+        <span class="fab-text">添加任务</span>
+      </button>
+    </div>
+  </main>
+
+  <!-- ========== 详情面板 ========== -->
+  <button class="detail-handle" id="btnExpandSidebar" title="收起详情面板" aria-label="收起详情面板">▸</button>
+  <aside class="detail" id="detailPanel">
+    <div class="detail-empty" id="detailEmpty">
+      <div class="empty-ico">📝</div>
+      <div class="empty-title">选择一个任务</div>
+      <div class="empty-sub">在这里查看步骤、备注、材料与超链接</div>
+    </div>
+    <div class="detail-body" id="detailBody" hidden></div>
+  </aside>
+</div>
+
+<!-- ========== 番茄钟 ========== -->
+<div class="overlay" id="pomodoroOverlay" hidden>
+  <div class="pomodoro-card">
+    <button class="close-x" id="pomoClose">✕</button>
+    <div class="pomo-modes">
+      <button class="pomo-mode active" data-mode="work">专注</button>
+      <button class="pomo-mode" data-mode="short">短休息</button>
+      <button class="pomo-mode" data-mode="long">长休息</button>
+    </div>
+
+    <div class="pomo-ring-wrap">
+      <svg class="pomo-ring" viewBox="0 0 240 240">
+        <circle class="ring-bg" cx="120" cy="120" r="106" />
+        <circle class="ring-fg" id="ringFg" cx="120" cy="120" r="106" />
+      </svg>
+      <div class="pomo-center">
+        <div class="pomo-time" id="pomoTime">25:00</div>
+        <div class="pomo-state" id="pomoState">准备开始</div>
+      </div>
+    </div>
+
+    <div class="pomo-task" id="pomoTaskWrap">
+      <span class="pomo-task-label">关联任务</span>
+      <select id="pomoTaskSelect"><option value="">（不关联）</option></select>
+    </div>
+
+    <div class="pomo-actions">
+      <button class="btn ghost" id="pomoReset">重置</button>
+      <button class="btn primary big" id="pomoStart">开始专注</button>
+      <button class="btn ghost" id="pomoSkip">跳过</button>
+    </div>
+
+    <div class="pomo-stats">
+      <div><b id="pomoTodayCount">0</b><span>今日番茄</span></div>
+      <div><b id="pomoTodayMin">0</b><span>专注分钟</span></div>
+      <div><b id="pomoRound">0/4</b><span>当前轮次</span></div>
+    </div>
+
+    <details class="pomo-settings">
+      <summary>番茄钟设置</summary>
+      <div class="pomo-setting-grid">
+        <label>专注(分钟)<input type="number" id="setWork" min="1" max="180" /></label>
+        <label>短休息(分钟)<input type="number" id="setShort" min="1" max="60" /></label>
+        <label>长休息(分钟)<input type="number" id="setLong" min="1" max="120" /></label>
+        <label>长休息间隔(轮)<input type="number" id="setRounds" min="1" max="12" /></label>
+        <label class="chk"><input type="checkbox" id="setAutoNext" /> 自动进入下一阶段</label>
+        <label class="chk"><input type="checkbox" id="setTopMost" /> 计时时窗口置顶</label>
+      </div>
+    </details>
+  </div>
+</div>
+
+<!-- ========== 通用弹窗 ========== -->
+<div class="overlay" id="modalOverlay" hidden>
+  <div class="modal-card" id="modalCard"></div>
+</div>
+
+<!-- 台前调度浏览器 -->
+<div class="browser-overlay" id="browserOverlay" hidden>
+  <div class="browser-panel">
+    <div class="browser-tabs">
+      <div class="browser-tab active">
+        <span class="browser-tab-favicon" id="browserFavicon">🌐</span>
+        <span class="browser-tab-title" id="browserTitle">加载中…</span>
+      </div>
+      <div class="browser-tab-actions">
+        <span class="browser-pomo-time" id="browserPomoTime" hidden></span>
+        <button class="icon-btn" id="browserPomodoro" title="用番茄钟专注当前任务">🍅</button>
+        <button class="icon-btn" id="browserOpenExternal" title="在系统浏览器打开">↗</button>
+        <button class="icon-btn browser-win-close" id="browserClose" title="关闭">✕</button>
+      </div>
+    </div>
+    <div class="browser-frame">
+      <webview id="browserWebview" src="about:blank" allowpopups></webview>
+    </div>
+  </div>
+</div>
+
+<!-- 台前调度任务详情 -->
+<div class="detail-overlay" id="detailOverlay" hidden>
+  <div class="detail-panel">
+    <div class="detail-tabs">
+      <div class="detail-tab active">
+        <span class="detail-tab-title" id="detailTabTitle">任务信息</span>
+      </div>
+      <div class="detail-tab-actions">
+        <button class="icon-btn detail-win-close" id="detailClose" title="关闭">✕</button>
+      </div>
+    </div>
+    <div class="detail-frame" id="detailCardBody"></div>
+  </div>
+</div>
+
+<!-- 添加模块浮层 -->
+<div class="add-modules-overlay" id="addModulesOverlay" hidden>
+  <div class="add-modules-panel">
+    <div class="add-modules-tabs">
+      <span class="add-modules-title">添加模块</span>
+      <button class="icon-btn" id="addModulesClose" title="关闭">✕</button>
+    </div>
+    <div class="add-modules-grid">
+      <button class="add-module-option" data-module="note">
+        <span class="module-emoji">📝</span>
+        <span>备注</span>
+      </button>
+      <button class="add-module-option" data-module="file">
+        <span class="module-emoji">📎</span>
+        <span>材料</span>
+      </button>
+      <button class="add-module-option" data-module="link">
+        <span class="module-emoji">🔗</span>
+        <span>超链接</span>
+      </button>
+      <button class="add-module-option" data-module="step">
+        <span class="module-emoji">📋</span>
+        <span>解决步骤</span>
+      </button>
+      <button class="add-module-option" data-module="substep">
+        <span class="module-emoji">📌</span>
+        <span>子步骤</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- 快速输入浮层（台前调度添加步骤/子步骤） -->
+<div class="quick-input-overlay" id="quickInputOverlay" hidden>
+  <div class="quick-input-panel">
+    <div class="quick-input-tabs">
+      <span class="quick-input-title" id="quickInputTitle">添加</span>
+      <button class="icon-btn" id="quickInputClose" title="关闭">✕</button>
+    </div>
+    <div class="quick-input-body">
+      <input type="text" class="inp" id="quickInputField" placeholder="输入名称，回车确认" autocomplete="off" />
+      <div class="quick-input-actions">
+        <button class="btn" id="quickInputCancel">取消</button>
+        <button class="btn primary" id="quickInputConfirm">确认</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 工具箱浮层 -->
+<div class="toolbox-overlay" id="toolboxOverlay" hidden>
+  <div class="toolbox-shell">
+    <aside class="toolbox-sidebar">
+      <div class="toolbox-brand">🔧 工具箱</div>
+      <nav class="toolbox-categories" id="toolboxCategories"></nav>
+    </aside>
+    <main class="toolbox-main">
+      <div class="toolbox-header">
+        <h2 class="toolbox-section-title" id="toolboxSectionTitle">常用工具</h2>
+        <div class="toolbox-header-actions">
+          <button class="toolbox-bg-btn" id="toolboxBgBtn" title="自定义背景">🎨</button>
+          <button class="toolbox-close-x" id="toolboxClose" title="关闭">✕</button>
+        </div>
+      </div>
+      <div class="toolbox-grid" id="toolboxGrid"></div>
+    </main>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script src="js/audio.js"></script>
+<script src="js/state.js"></script>
+<script src="js/pomodoro.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

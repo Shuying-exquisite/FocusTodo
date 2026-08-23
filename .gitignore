@@ -1,0 +1,22 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+outputs/
+*.blockmap
+
+# 打包/运行残留
+*.bak
+*.log
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+.idea/
+.vscode/
+
+# 本地数据（运行时会生成）
+data.json

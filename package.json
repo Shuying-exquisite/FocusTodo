@@ -1,0 +1,57 @@
+{
+  "name": "focus-todo",
+  "version": "1.0.7",
+  "description": "多任务表 · 步骤化 · 番茄钟 待办清单",
+  "main": "src/main.js",
+  "author": "shuyingynag",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shuyingynag/FocusTodo.git"
+  },
+  "homepage": "https://github.com/shuyingynag/FocusTodo",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "31.7.7",
+    "electron-builder": "24.13.3"
+  },
+  "build": {
+    "appId": "com.focustodo.app",
+    "productName": "FocusTodo",
+    "copyright": "Copyright © 2026 shuyingynag",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "FocusTodo-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "include": "build/appRunning.nsh",
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "FocusTodo 待办清单",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}
