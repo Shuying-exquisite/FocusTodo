@@ -1,10 +1,15 @@
 # 依赖
 node_modules/
 
-# 构建产物
+# 构建产物（electron-builder 输出，含 dist/、dist109/、dist110/ 等）
 dist/
+dist*/
 outputs/
 *.blockmap
+
+# 本地生成的预览页与解包校验目录
+preview-group-standalone.html
+*_check/
 
 # 打包/运行残留
 *.bak

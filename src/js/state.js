@@ -74,7 +74,8 @@ window.Store = (function () {
         }
       ],
       settings: defaultSettings(),
-      pomodoro: defaultPomodoro()
+      pomodoro: defaultPomodoro(),
+      groups: []
     };
   }
 
@@ -87,6 +88,18 @@ window.Store = (function () {
     data.settings = Object.assign(defaultSettings(), data.settings || {});
     data.pomodoro = Object.assign(defaultPomodoro(), data.pomodoro || {});
     if (!data.pomodoro.history || typeof data.pomodoro.history !== 'object') data.pomodoro.history = {};
+
+    /* 任务分组：{ id, name, color, star, collapsed, createdAt, order }
+       分组没有自己的封面；合并卡片背景由各成员任务的 cover 拼接而成 */
+    data.groups = (Array.isArray(data.groups) ? data.groups : []).filter((g) => g && typeof g === 'object').map((g, i) => ({
+      id: g.id || uid(),
+      name: g.name || '未命名分组',
+      color: g.color || '',
+      star: !!g.star,
+      collapsed: g.collapsed === undefined ? true : !!g.collapsed,
+      createdAt: g.createdAt || Date.now(),
+      order: typeof g.order === 'number' ? g.order : i
+    }));
 
     data.lists.forEach((l, i) => {
       l.id = l.id || uid();
@@ -105,6 +118,7 @@ window.Store = (function () {
     data.tasks.forEach((t, i) => {
       t.id = t.id || uid();
       t.title = t.title || '未命名任务';
+      t.groupId = typeof t.groupId === 'string' ? t.groupId : '';
       t.done = !!t.done;
       t.doneAt = t.doneAt || null;
       t.star = !!t.star;
@@ -188,6 +202,11 @@ window.Store = (function () {
       }
     });
 
+    /* 校验 groupId 指向的分组存在；清掉空分组 */
+    const groupIds = new Set(data.groups.map((g) => g.id));
+    data.tasks.forEach((t) => { if (t.groupId && !groupIds.has(t.groupId)) t.groupId = ''; });
+    data.groups = data.groups.filter((g) => data.tasks.some((t) => t.groupId === g.id));
+
     return data;
   }
 
@@ -250,6 +269,30 @@ window.Store = (function () {
     },
     tasksOf(listId) { return S.data.tasks.filter((t) => t.listId === listId); },
 
+    /* ---------- 任务分组 ---------- */
+    group(id) { return (S.data.groups || []).find((g) => g.id === id) || null; },
+    membersOf(groupId) { return S.data.tasks.filter((t) => t.groupId === groupId); },
+    addGroup(name, color) {
+      const g = {
+        id: uid(), name: name || '新分组', color: color || '', collapsed: true,
+        star: false,
+        createdAt: Date.now(), order: (S.data.groups || []).length
+      };
+      if (!Array.isArray(S.data.groups)) S.data.groups = [];
+      S.data.groups.push(g);
+      return g;
+    },
+    removeGroup(id) {
+      // 解散：成员脱离分组（任务保留），分组定义删除
+      S.data.tasks.forEach((t) => { if (t.groupId === id) t.groupId = ''; });
+      S.data.groups = (S.data.groups || []).filter((g) => g.id !== id);
+    },
+    cleanupGroups() {
+      // 成员被删光后自动移除空分组
+      if (!Array.isArray(S.data.groups)) S.data.groups = [];
+      S.data.groups = S.data.groups.filter((g) => S.data.tasks.some((t) => t.groupId === g.id));
+    },
+
     /* ---------- 增删改 ---------- */
     addList(name, emoji, color) {
       const l = {
@@ -265,6 +308,7 @@ window.Store = (function () {
     removeList(id) {
       S.data.lists = S.data.lists.filter((l) => l.id !== id);
       S.data.tasks = S.data.tasks.filter((t) => t.listId !== id);
+      S.cleanupGroups();
       S.save();
     },
 
@@ -300,6 +344,7 @@ window.Store = (function () {
     },
     removeTask(id) {
       S.data.tasks = S.data.tasks.filter((t) => t.id !== id);
+      S.cleanupGroups();
       S.save();
     },
 

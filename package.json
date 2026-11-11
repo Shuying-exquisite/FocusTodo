@@ -1,6 +1,6 @@
 {
   "name": "focus-todo",
-  "version": "1.0.7",
+  "version": "1.0.17",
   "description": "多任务表 · 步骤化 · 番茄钟 待办清单",
   "main": "src/main.js",
   "author": "shuyingynag",

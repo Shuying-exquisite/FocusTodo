@@ -19,6 +19,7 @@ window.App = (function () {
   let dragFromStepRow = false; // 标记拖拽是否起始于横向步骤图标行内
   let dragSortStepIconId = null;     // 横向图标行内拖拽排序的步骤 id
   let dragSortStepIconTaskId = null; // 横向图标行内拖拽排序所属任务 id
+  let dragGroupSort = null;          // 合并卡片整格拖动排序：{ groupId, slot }
   let dragArchiveId = null;          // 当前拖拽的存档任务表 id
 
   const $ = (id) => document.getElementById(id);
@@ -986,7 +987,7 @@ window.App = (function () {
       if (view.key === 'today') arr = arr.filter((t) => t.due && startOfDay(t.due) <= today && !t.done);
       else if (view.key === 'week') arr = arr.filter((t) => t.due && t.due <= today + 7 * 86400000 && !t.done);
       else if (view.key === 'star') arr = arr.filter((t) => t.star);
-      else if (view.key === 'done') arr = arr.filter((t) => t.done);
+      // done 视图的 t.done 过滤延后到 pool 快照之后，见下方
     }
 
     if (search) {
@@ -1000,6 +1001,11 @@ window.App = (function () {
       );
     }
 
+    // pool = 视图过滤后、尚未按 done 分区/过滤的全量任务，供分组取出完整成员列表
+    // （done 视图原本在这里就把未完成任务过滤掉了，会让分组只剩半个，必须先留一份）
+    const pool = arr.slice();
+    if (view.key === 'done') arr = arr.filter((t) => t.done);
+
     const cmp = {
       manual: (a, b) => a.order - b.order,
       due: (a, b) => (a.due || 8.64e15) - (b.due || 8.64e15),
@@ -1010,7 +1016,8 @@ window.App = (function () {
 
     const active = arr.filter((t) => !t.done).sort(cmp);
     const done = arr.filter((t) => t.done).sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
-    return { active, done };
+    // pool 是过滤前的快照：含未完成的同组成员，分组才能作为整体判定
+    return { active, done, pool };
   }
 
   function viewMeta() {
@@ -1091,15 +1098,117 @@ window.App = (function () {
         <div class="task-actions">
           <span class="icon-btn star-btn ${t.star ? 'on' : ''}" data-star="${t.id}" title="标记重要">${t.star ? '★' : '☆'}</span>
           <span class="icon-btn" data-pomo="${t.id}" title="用番茄钟专注此任务">🍅</span>
+          ${t.groupId ? `<span class="icon-btn" data-groupleave="${t.id}" title="移出分组">↩️</span>` : ''}
           <span class="icon-btn" data-del="${t.id}" title="删除任务">🗑</span>
         </div>
       </div>
     </div>`;
   }
 
+  /* ---------------- 任务分组卡片 ---------------- */
+  // 分组聚合标签：任务数 + 步骤完成度 + 所属任务表
+  function groupAggTags(g, members) {
+    const tags = [];
+    const doneSteps = members.reduce((n, t) => n + t.steps.filter((s) => s.done).length, 0);
+    const totalSteps = members.reduce((n, t) => n + t.steps.length, 0);
+    tags.push(`<span class="tag group-tag">👥 ${members.length} 个任务</span>`);
+    if (totalSteps) tags.push(`<span class="tag steps">☑ ${doneSteps}/${totalSteps}</span>`);
+    if (members.every((t) => t.repeat === 'manual')) tags.push('<span class="tag">🔁 手动重复</span>');
+    const l = Store.list(members[0].listId);
+    if (view.type !== 'list' && l) tags.push(`<span class="tag list"><span class="list-dot" style="background:${esc(l.color)};width:7px;height:7px"></span> ${esc(l.name)}</span>`);
+    return tags;
+  }
+
+  // 合并态：一张带背景的卡片，把各成员任务的同序图标按高度切片叠成一个图标位，点组标签展开
+  function resolveGroupColor(g, members) {
+    if (g.color) return g.color;
+    const l = members[0] && Store.list(members[0].listId);
+    return (l && l.color) || '#4f6ef7';
+  }
+  function groupMergedHTML(g, members) {
+    const tags = groupAggTags(g, members);
+    const gc = resolveGroupColor(g, members);
+    // 「拼接」：第 i 个图标位只由确实有第 i 个子步骤的成员任务参与，按参与数均分高度条带
+    //  1) 某位只有一个成员有步骤（如 4 步 vs 5 步时的第 5 位）→ 独占整格、不切割
+    //  2) 某位部分完成 → 未完成的步骤独占/均分该位；已完成的各自拆成独占完成图标，排到末尾
+    //  3) 某位全部完成 → 重新合并成一个完成图标，排到末尾
+    //  4) 都没完成 → 按参与数 1/k 切片（2 个任务上下各半、3 个任务各 1/3）
+    // 容器保持单行横向滚动，不把成员图标全部平铺展开
+    const maxSteps = members.reduce((m, t) => Math.max(m, t.steps.length), 0);
+    const normalIcons = [];
+    const doneIcons = [];
+    const sliceHTML = (item, idx, count) => {
+      const top = (idx * 100 / count).toFixed(4);
+      const bottom = ((count - idx - 1) * 100 / count).toFixed(4);
+      const clip = `clip-path:inset(${top}% 0 ${bottom}% 0)`;
+      return `<span class="icon-slice ${item.s.done ? 'done' : ''}" title="${esc(item.t.title)} · ${esc(item.s.title)}" data-stepopen="${item.s.id}" data-steptask="${item.t.id}" draggable="false" style="${clip}">${stepIconContent(item.s)}</span>`;
+    };
+    // movable 的图标位带 slot（= 成员任务 steps 的数组下标），拖整格时据此同步重排所有成员
+    // 完成图标固定在末尾、不参与拖动；普通位可拖
+    const stackedHTML = (items, cls = '', slot = -1, movable = false) =>
+      `<span class="step-icon stacked ${cls}" draggable="${movable ? 'true' : 'false'}"${movable ? ` data-groupstep="${g.id}" data-slot="${slot}"` : ''}>${items.map((it, j) => sliceHTML(it, j, items.length)).join('')}</span>`;
+
+    for (let i = 0; i < maxSteps; i++) {
+      const items = [];
+      members.forEach((t) => { if (t.steps[i]) items.push({ t, s: t.steps[i] }); });
+      if (!items.length) continue;
+      const done = items.filter((x) => x.s.done);
+      const pending = items.filter((x) => !x.s.done);
+      if (!pending.length) {
+        // 该位全部完成：合成一个完成图标（内部仍按 1/k 切片，保证每个成员步骤可单独点击/右键）
+        doneIcons.push(stackedHTML(items, 'done', i, false));
+      } else {
+        normalIcons.push(stackedHTML(pending, '', i, true));
+        done.forEach((x) => doneIcons.push(stackedHTML([x], 'done', i, false)));
+      }
+    }
+    const iconsHTML = normalIcons.concat(doneIcons).join('');
+    const allDone = members.every((t) => t.done);
+    // 分组背景 = 组内各成员「任务卡片封面」按 1/n 高度拼接（与图标切片同一套规则）
+    // 某个成员没设封面时，它那一条带留空、透出卡片底色/渐变
+    const n = members.length;
+    const hasCover = members.some((t) => t.cover);
+    const coverHTML = hasCover ? `<div class="group-cover">${members.map((t, i) => {
+      if (!t.cover) return '';
+      const top = (i * 100 / n).toFixed(4);
+      const bottom = ((n - i - 1) * 100 / n).toFixed(4);
+      return `<span class="group-cover-slice" style="clip-path:inset(${top}% 0 ${bottom}% 0);background-image:url('${esc(t.cover).replace(/'/g, "\\'")}')"></span>`;
+    }).join('')}</div>` : '';
+    return `<div class="task-item group-collapsed ${hasCover ? 'group-has-cover' : ''} ${allDone ? 'done' : ''} ${sel.taskId && members.some((t) => t.id === sel.taskId) ? 'selected' : ''}" data-taskgroup="${g.id}" style="--gc:${esc(gc)}">
+      ${coverHTML}
+      <div class="task-head" data-grouptoggle="${g.id}" title="点击展开分组">
+        <span class="checkbox ${allDone ? 'checked' : ''}" data-groupcheck="${g.id}" title="完成全部成员任务"></span>
+        <div class="task-main">
+          <div class="task-title-row"><div class="task-title">${esc(g.name)}</div></div>
+          ${tags.length ? `<div class="task-meta">${tags.join('')}</div>` : ''}
+        </div>
+        ${iconsHTML ? `<div class="group-icons">${iconsHTML}</div>` : ''}
+        <div class="task-actions">
+          <span class="icon-btn star-btn ${g.star ? 'on' : ''}" data-groupstar="${g.id}" title="标记重要">${g.star ? '★' : '☆'}</span>
+          <span class="icon-btn" data-grouppomo="${g.id}" title="用番茄钟专注组内任务">🍅</span>
+          <span class="icon-btn" data-groupdisband="${g.id}" title="解散分组（保留任务）">💨</span>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // 展开态：组标题行 + 成员任务卡片
+  function groupExpandedHTML(g, members) {
+    const tags = groupAggTags(g, members);
+    return `<div class="task-group" data-group="${g.id}">
+      <div class="task-group-head" data-grouptoggle="${g.id}" title="点击收起分组">
+        <span class="group-caret">▾</span>
+        <span class="task-group-name">${esc(g.name)}</span>
+        <span class="task-group-meta">${tags.join('')}</span>
+        <span class="icon-btn tiny" data-groupmenu="${g.id}" title="分组操作">⋯</span>
+      </div>
+      <div class="task-group-body">${members.map(taskHTML).join('')}</div>
+    </div>`;
+  }
+
   function renderTasks() {
     if (view.type === 'archive') { renderArchive(); return; }
-    const { active, done } = viewTasks();
+    const { active, done, pool } = viewTasks();
     const meta = viewMeta();
     const showDone = D().settings.showDone || view.key === 'done';
 
@@ -1114,21 +1223,55 @@ window.App = (function () {
     const canAdd = view.key !== 'done';
     $('btnAddTask').style.display = canAdd ? '' : 'none';
 
-    const renderWithGroups = (arr, doneGroup) => arr.map(taskHTML).join('');
+    // 按分组渲染：分组作为一个整体参与「待办 / 已完成」分区，不再被成员状态拆成两张卡
+    //  - 组内还有未完成成员 → 整张分组卡（含全部成员）留在待办区
+    //  - 组内成员全部完成   → 整张分组卡移到已完成区（列表最后）
+    // 成员顺序按 order 固定，避免完成状态变化时图标拼接的位序跳动
+    const groups = D().groups || [];
+    const groupInfo = new Map();
+    groups.forEach((g) => {
+      const members = pool.filter((t) => t.groupId === g.id)
+        .sort((a, b) => (a.order || 0) - (b.order || 0));
+      if (members.length > 1) {
+        groupInfo.set(g.id, { g, members, allDone: members.every((t) => t.done) });
+      }
+    });
+    const rendered = new Set();
+    const renderWithGroups = (arr, isDone) => {
+      const out = [];
+      arr.forEach((t) => {
+        if (t.groupId) {
+          const gdef = groups.find((x) => x.id === t.groupId);
+          if (!gdef) { t.groupId = ''; out.push(taskHTML(t)); return; }  // 分组定义丢失，自动脱离
+          const info = groupInfo.get(t.groupId);
+          // 当前视图下组内可见成员不足时按单任务显示，但保留 groupId（不能误删分组关系）
+          if (!info) { out.push(taskHTML(t)); return; }
+          if (rendered.has(info.g.id)) return;
+          if (info.allDone !== !!isDone) return;   // 整组归属另一个区，不在本区渲染
+          rendered.add(info.g.id);
+          out.push(info.g.collapsed ? groupMergedHTML(info.g, info.members) : groupExpandedHTML(info.g, info.members));
+          return;
+        }
+        out.push(taskHTML(t));
+      });
+      return out.join('');
+    };
 
-    let html = renderWithGroups(active);
-    if (showDone && done.length && view.key !== 'done') {
-      html += `<div class="group-title">已完成 ${done.length}</div>` + renderWithGroups(done, true);
-    } else if (view.key === 'done') {
+    let html;
+    if (view.key === 'done') {
       html = renderWithGroups(done, true);
+    } else {
+      html = renderWithGroups(active);
+      if (showDone && done.length) {
+        html += `<div class="group-title">已完成 ${done.length}</div>` + renderWithGroups(done, true);
+      }
     }
     $('taskList').innerHTML = html;
     const hasVisibleTasks = active.length > 0 || (showDone && done.length > 0);
     $('emptyState').hidden = hasVisibleTasks;
 
-    // 为步骤图标横向列表启用鼠标拖拽滚动
-    $('taskList').querySelectorAll('.step-icons-row').forEach(enableDragScroll);
-    $('taskList').querySelectorAll('.substep-icons-row').forEach(enableDragScroll);
+    // 为步骤图标横向列表启用鼠标拖拽滚动（合并卡片的 .group-icons 同样需要）
+    $('taskList').querySelectorAll('.step-icons-row, .substep-icons-row, .group-icons').forEach(enableDragScroll);
 
     renderSidebar();
   }
@@ -1323,6 +1466,8 @@ window.App = (function () {
     row.addEventListener('pointermove', (e) => {
       if (!down) return;
       if (dragMoveStepId) return; // 正在拖出步骤图标，不再横向滚动
+      // 合并卡片：按在图标上是「拖动排序」，按在空白处才是「滚动容器」
+      if (pendingIcon && row.classList.contains('group-icons')) return;
       const x = e.pageX - row.offsetLeft;
       if (Math.abs(x - startX) > 4) moved = true;
       e.preventDefault();
@@ -2414,6 +2559,225 @@ window.App = (function () {
       </div>`, () => { $('mOk').onclick = () => { closeModal(); onOk(); }; });
   }
 
+  /* ---------------- 任务分组操作 ---------------- */
+  function toggleGroupCollapse(groupId) {
+    const g = Store.group(groupId);
+    if (!g) return;
+    g.collapsed = !g.collapsed;
+    Store.save();
+    renderTasks();
+  }
+
+  // 组复选框：一键完成 / 恢复全部成员任务（重复任务沿用滚动到下一周期的逻辑）
+  function toggleGroupCheck(groupId, evt) {
+    const members = Store.membersOf(groupId);
+    if (!members.length) return;
+    const target = !members.every((m) => m.done);
+    members.forEach((m) => { if (m.done !== target) toggleTask(m.id, evt); });
+  }
+
+  // 把任务（或其所在整组）并入目标分组
+  function mergeTaskIntoGroup(taskId, groupId) {
+    const src = Store.task(taskId);
+    const g = Store.group(groupId);
+    if (!src || !g || src.groupId === groupId) return;
+    const members = Store.membersOf(groupId);
+    if (members.length) src.listId = members[0].listId;   // 跟随分组所在任务表
+    let extra = '';
+    if (src.groupId) {
+      const oldId = src.groupId;
+      const oldName = (Store.group(oldId) || {}).name || '';
+      D().tasks.forEach((t) => { if (t.groupId === oldId) t.groupId = groupId; });
+      S_removeGroupDef(oldId);
+      extra = `，并合并了分组「${oldName}」`;
+    } else {
+      src.groupId = groupId;
+    }
+    Store.save();
+    renderTasks();
+    if (sel.taskId) renderDetail();
+    toast(`已并入「${g.name}」${extra}`);
+  }
+
+  // 直接删除分组定义（成员已先行改派时使用）
+  function S_removeGroupDef(id) {
+    const gs = D().groups || [];
+    const idx = gs.findIndex((g) => g.id === id);
+    if (idx >= 0) gs.splice(idx, 1);
+  }
+
+  function createGroupModal(taskId) {
+    const t = Store.task(taskId);
+    if (!t) return;
+    modal(`
+      <div class="modal-title">🗂 创建任务分组</div>
+      <div class="modal-desc">分组创建后默认合并为一张卡片：点击组标签展开，再次点击收起。把其他任务拖到分组卡片上即可并入。</div>
+      <div class="field"><div class="field-label"><span>分组名称</span></div>
+        <input class="inp" id="mGroupName" placeholder="例如：每日签到" /></div>
+      <div class="modal-actions">
+        <button class="btn" data-cancel="1">取消</button>
+        <button class="btn primary" id="mGroupOk">创建分组</button>
+      </div>`, () => {
+      const inp = $('mGroupName');
+      inp.value = t.title;
+      inp.focus(); inp.select();
+      const ok = () => {
+        const name = inp.value.trim() || t.title;
+        const listColor = (Store.list(t.listId) || {}).color || '';
+        const g = Store.addGroup(name, listColor);
+        g.collapsed = true;
+        t.groupId = g.id;
+        Store.save();
+        closeModal();
+        renderTasks();
+        toast('已创建分组，把其他任务拖到卡片上即可并入');
+      };
+      $('mGroupOk').onclick = ok;
+      inp.onkeydown = (e) => { if (e.key === 'Enter') ok(); };
+    });
+  }
+
+  function renameGroupModal(g) {
+    if (!g) return;
+    modal(`
+      <div class="modal-title">重命名分组</div>
+      <div class="field"><div class="field-label"><span>分组名称</span></div>
+        <input class="inp" id="mGroupName" placeholder="分组名称" /></div>
+      <div class="modal-actions">
+        <button class="btn" data-cancel="1">取消</button>
+        <button class="btn primary" id="mGroupOk">保存</button>
+      </div>`, () => {
+      const inp = $('mGroupName');
+      inp.value = g.name;
+      inp.focus(); inp.select();
+      const ok = () => {
+        g.name = inp.value.trim() || g.name;
+        Store.save();
+        closeModal();
+        renderTasks();
+        toast('分组已重命名');
+      };
+      $('mGroupOk').onclick = ok;
+      inp.onkeydown = (e) => { if (e.key === 'Enter') ok(); };
+    });
+  }
+
+  function disbandGroup(groupId) {
+    const g = Store.group(groupId);
+    if (!g) return;
+    const n = Store.membersOf(groupId).length;
+    confirmBox('解散分组', `解散分组「${g.name}」吗？组内 ${n} 个任务会保留，只是恢复为独立卡片。`, () => {
+      Store.removeGroup(groupId);
+      Store.save();
+      renderTasks();
+      if (sel.taskId) renderDetail();
+      toast('已解散分组');
+    });
+  }
+
+  function removeFromGroup(taskId) {
+    const t = Store.task(taskId);
+    if (!t || !t.groupId) return;
+    t.groupId = '';
+    Store.save();
+    renderTasks();
+    if (sel.taskId === taskId) renderDetail();
+    toast('已移出分组');
+  }
+
+  // 合并卡片拖整格排序：对每个成员任务执行同一次 splice 移动，保持上下拼接位序对齐
+  // slot 就是 steps 的数组下标；步骤数不等的成员若没有该位则跳过
+  function reorderGroupStepSlots(groupId, srcSlot, dstSlot, before) {
+    const g = Store.group(groupId);
+    if (!g || srcSlot === dstSlot) return 0;
+    let changed = 0;
+    Store.membersOf(groupId).forEach((t) => {
+      const steps = Array.isArray(t.steps) ? t.steps : null;
+      if (!steps || steps.length <= srcSlot) return;
+      const [src] = steps.splice(srcSlot, 1);
+      const insertIdx = dstSlot < srcSlot
+        ? (before ? dstSlot : dstSlot + 1)
+        : (before ? dstSlot - 1 : dstSlot);
+      steps.splice(Math.max(0, Math.min(insertIdx, steps.length)), 0, src);
+      changed++;
+    });
+    if (changed) Store.save();
+    return changed;
+  }
+
+  // 统一挂载右键菜单。关闭监听必须放在**捕获阶段**：任务列表的 click 委托里有
+  // e.stopPropagation()，冒泡阶段到不了 document，会导致「右键弹出菜单后点分组卡片展开，
+  // 菜单还留在屏幕上」。捕获阶段不受 stopPropagation 影响。
+  // 菜单内部的点击不自动关闭，交给各菜单项的 onclick；Esc 也能关闭。
+  function dismissContextMenus() {
+    document.querySelectorAll('.context-menu').forEach((m) => {
+      if (m._dismiss) m._dismiss(); else m.remove();
+    });
+  }
+  function mountContextMenu(menu) {
+    dismissContextMenus();
+    document.body.appendChild(menu);
+    let close = () => {};
+    const onDown = (e) => { if (!menu.contains(e.target)) close(); };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    close = () => {
+      menu.remove();
+      document.removeEventListener('pointerdown', onDown, true);
+      document.removeEventListener('keydown', onKey, true);
+    };
+    menu._dismiss = close;
+    setTimeout(() => {
+      document.addEventListener('pointerdown', onDown, true);
+      document.addEventListener('keydown', onKey, true);
+    }, 0);
+    return close;
+  }
+
+  // 右键普通任务卡：创建分组（分组相关的其它右键项仍保持取消状态）
+  function showTaskContextMenu(taskId, x, y) {
+    const t = Store.task(taskId);
+    if (!t || t.groupId) return;   // 已在分组内的任务不弹此菜单
+    const menu = document.createElement('div');
+    menu.className = 'context-menu';
+    menu.style.left = Math.min(x, window.innerWidth - 170) + 'px';
+    menu.style.top = Math.min(y, window.innerHeight - 60) + 'px';
+    menu.innerHTML = `<button data-mkgroup>🗂 创建分组（合并卡片）</button>`;
+    const close = mountContextMenu(menu);
+    menu.querySelector('[data-mkgroup]').onclick = () => { close(); createGroupModal(taskId); };
+  }
+
+  function showGroupContextMenu(g, x, y) {
+    if (!g) return;
+    const menu = document.createElement('div');
+    menu.className = 'context-menu';
+    menu.style.left = Math.min(x, window.innerWidth - 170) + 'px';
+    menu.style.top = Math.min(y, window.innerHeight - 120) + 'px';
+    menu.innerHTML = `
+      <button data-fold>▾ ${g.collapsed ? '展开' : '收起'}分组</button>
+      <button data-rename>✏️ 重命名分组</button>
+      <button data-disband class="danger">💨 解散分组（保留任务）</button>
+    `;
+    const close = mountContextMenu(menu);
+    menu.querySelector('[data-fold]').onclick = () => { close(); toggleGroupCollapse(g.id); };
+    menu.querySelector('[data-rename]').onclick = () => { close(); renameGroupModal(g); };
+    menu.querySelector('[data-disband]').onclick = () => { close(); disbandGroup(g.id); };
+  }
+
+  // 🍅 分组番茄钟：弹出成员列表，选一个成员任务开启
+  function showGroupPomoMenu(g, x, y) {
+    const members = Store.membersOf(g.id);
+    if (!members.length) return;
+    const menu = document.createElement('div');
+    menu.className = 'context-menu';
+    menu.style.left = Math.min(x, window.innerWidth - 200) + 'px';
+    menu.style.top = Math.min(y, Math.max(8, window.innerHeight - 40 - members.length * 36)) + 'px';
+    menu.innerHTML = members.map((t) => `<button data-gpomo="${esc(t.id)}">🍅 ${esc(t.title)}</button>`).join('');
+    const close = mountContextMenu(menu);
+    menu.querySelectorAll('[data-gpomo]').forEach((b) => {
+      b.onclick = () => { close(); Pomodoro.open(b.dataset.gpomo); };
+    });
+  }
+
   /* ---------------- 一键重置重复任务 ---------------- */
   function recurringTasksInView() {
     const { active, done } = viewTasks();
@@ -2544,7 +2908,7 @@ window.App = (function () {
   }
 
   function showListContextMenu(listId, x, y) {
-    const existing = document.querySelector('.context-menu'); if (existing) existing.remove();
+    dismissContextMenus();
     const l = Store.list(listId); if (!l) return;
     const menu = document.createElement('div');
     menu.className = 'context-menu';
@@ -2555,9 +2919,7 @@ window.App = (function () {
       <button data-archive>📦 存档任务表</button>
       <button data-delete class="danger">🗑 删除任务表</button>
     `;
-    document.body.appendChild(menu);
-    const close = () => { menu.remove(); document.removeEventListener('click', close); document.removeEventListener('keydown', close); };
-    setTimeout(() => { document.addEventListener('click', close); document.addEventListener('keydown', close); }, 0);
+    const close = mountContextMenu(menu);
     menu.querySelector('[data-edit]').onclick = () => {
       close();
       sel.kind = 'list'; sel.listId = listId;
@@ -2582,7 +2944,7 @@ window.App = (function () {
   }
 
   function showArchiveContextMenu(listId, x, y) {
-    const existing = document.querySelector('.context-menu'); if (existing) existing.remove();
+    dismissContextMenus();
     const l = Store.list(listId); if (!l) return;
     const menu = document.createElement('div');
     menu.className = 'context-menu';
@@ -2593,9 +2955,7 @@ window.App = (function () {
       <button data-unarchive>↩️ 移出存档</button>
       <button data-delete class="danger">🗑 删除任务表</button>
     `;
-    document.body.appendChild(menu);
-    const close = () => { menu.remove(); document.removeEventListener('click', close); document.removeEventListener('keydown', close); };
-    setTimeout(() => { document.addEventListener('click', close); document.addEventListener('keydown', close); }, 0);
+    const close = mountContextMenu(menu);
     menu.querySelector('[data-open]').onclick = () => { close(); view.type = 'list'; view.key = listId; renderTasks(); };
     menu.querySelector('[data-unarchive]').onclick = () => { close(); unarchiveList(listId); };
     menu.querySelector('[data-delete]').onclick = () => { close(); deleteArchivedList(listId); };
@@ -3107,11 +3467,35 @@ window.App = (function () {
     // 任务列表交互
     const listEl = $('taskList');
     listEl.addEventListener('click', (e) => {
-      const el = e.target.closest('[data-check],[data-expand],[data-star],[data-del],[data-pomo],[data-stepcheck],[data-stepdel],[data-stepopen],[data-substepopen],[data-open],[data-archivelist],[data-unarchive],[data-delarchivelist]');
+      const el = e.target.closest('[data-check],[data-expand],[data-star],[data-del],[data-pomo],[data-stepcheck],[data-stepdel],[data-stepopen],[data-substepopen],[data-open],[data-archivelist],[data-unarchive],[data-delarchivelist],[data-grouptoggle],[data-groupmenu],[data-groupcheck],[data-groupstar],[data-grouppomo],[data-groupdisband],[data-groupleave]');
       if (!el) return;
       const d = el.dataset;
-      const taskId = el.closest('[data-task]') ? el.closest('[data-task]').dataset.task : null;
+      const taskEl = el.closest('[data-task]');
+      // 合并卡片里的图标带 data-steptask（属于哪个成员任务），普通卡片取最近的 data-task
+      const taskId = d.steptask || (taskEl ? taskEl.dataset.task : null);
 
+      if (d.groupleave) { e.stopPropagation(); return removeFromGroup(d.groupleave); }
+      if (d.groupcheck) { e.stopPropagation(); return toggleGroupCheck(d.groupcheck, e); }
+      if (d.grouptoggle) { e.stopPropagation(); return toggleGroupCollapse(d.grouptoggle); }
+      if (d.groupmenu) {
+        e.stopPropagation();
+        const g = Store.group(d.groupmenu);
+        if (g) showGroupContextMenu(g, e.clientX, e.clientY);
+        return;
+      }
+      if (d.groupstar) {
+        e.stopPropagation();
+        const g = Store.group(d.groupstar);
+        if (g) { g.star = !g.star; Store.save(); renderTasks(); toast(g.star ? '已标记重要' : '已取消重要'); }
+        return;
+      }
+      if (d.grouppomo) {
+        e.stopPropagation();
+        const g = Store.group(d.grouppomo);
+        if (g) showGroupPomoMenu(g, e.clientX, e.clientY);
+        return;
+      }
+      if (d.groupdisband) { e.stopPropagation(); return disbandGroup(d.groupdisband); }
       if (d.unarchive) { e.stopPropagation(); return unarchiveList(d.unarchive); }
       if (d.delarchivelist) { e.stopPropagation(); return deleteArchivedList(d.delarchivelist); }
       if (d.archivelist) {
@@ -3187,15 +3571,28 @@ window.App = (function () {
       }
     });
 
-    // 右键点击步骤图标：快捷完成/取消完成步骤
+    // 右键：步骤图标快捷完成；普通任务卡弹「创建分组」；合并卡片不弹菜单
+    // 其余分组操作走展开态的 ⋯ 菜单与合并卡片上的 ⭐ / 🍅 / 💨 按钮
     listEl.addEventListener('contextmenu', (e) => {
       const icon = e.target.closest('[data-stepopen]');
-      if (!icon) return;
-      const taskEl = icon.closest('[data-task]');
-      if (!taskEl) return;
-      e.preventDefault();
-      e.stopPropagation();
-      toggleStep(taskEl.dataset.task, icon.dataset.stepopen, e);
+      if (icon) {
+        const taskEl = icon.closest('[data-task]');
+        const tid = icon.dataset.steptask || (taskEl ? taskEl.dataset.task : null);
+        if (!tid) return;
+        e.preventDefault();
+        e.stopPropagation();
+        toggleStep(tid, icon.dataset.stepopen, e);
+        return;
+      }
+      if (view.type === 'archive') return;
+      const taskEl = e.target.closest('[data-task]');
+      if (taskEl) {
+        e.preventDefault();
+        showTaskContextMenu(taskEl.dataset.task, e.clientX, e.clientY);
+        return;
+      }
+      // 合并卡片右键仍不弹菜单，只屏蔽系统默认菜单
+      if (e.target.closest('[data-taskgroup]')) e.preventDefault();
     });
 
     // 步骤内联添加
@@ -3211,8 +3608,18 @@ window.App = (function () {
       if (again) again.focus();
     });
 
-    // 拖拽排序（任务 + 步骤）
+    // 拖拽排序（任务 + 步骤 + 合并卡片整格）
     listEl.addEventListener('dragstart', (e) => {
+      // 必须放在最前面：enableDragScroll 的 dragFromStepRow 会拦截容器内的 dragstart
+      const groupIcon = e.target.closest('[data-groupstep]');
+      if (groupIcon) {
+        dragGroupSort = { groupId: groupIcon.dataset.groupstep, slot: Number(groupIcon.dataset.slot) };
+        groupIcon.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setData('text/plain', 'groupstep:' + dragGroupSort.slot); } catch (_) {}
+        e.stopPropagation();
+        return;
+      }
       const stepIcon = e.target.closest('[data-stepmove]');
       if (stepIcon) {
         const taskEl = stepIcon.closest('[data-task]');
@@ -3262,10 +3669,24 @@ window.App = (function () {
       dragMoveStepTaskId = null;
       dragSortStepIconId = null;
       dragSortStepIconTaskId = null;
+      dragGroupSort = null;
       listEl.querySelectorAll('.step-card').forEach((x) => x.classList.remove('drop-before', 'drop-after'));
-      listEl.querySelectorAll('.task-item').forEach((x) => x.classList.remove('drop-target'));
+      listEl.querySelectorAll('.task-item, [data-taskgroup]').forEach((x) => x.classList.remove('drop-target'));
     });
     listEl.addEventListener('dragover', (e) => {
+      // 合并卡片：整格拖动排序（同一分组内，只落在可拖动的图标位上）
+      if (dragGroupSort) {
+        const icon = e.target.closest('[data-groupstep]');
+        if (icon && icon.dataset.groupstep === dragGroupSort.groupId && Number(icon.dataset.slot) !== dragGroupSort.slot) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          const r = icon.getBoundingClientRect();
+          const before = e.clientX < r.left + r.width / 2;
+          listEl.querySelectorAll('.step-icon').forEach((x) => x.classList.remove('drop-before', 'drop-after'));
+          icon.classList.add(before ? 'drop-before' : 'drop-after');
+        }
+        return;
+      }
       // 横向图标行内拖拽排序（同任务内）
       if (dragSortStepIconId && dragSortStepIconTaskId) {
         const icon = e.target.closest('.step-icon');
@@ -3310,7 +3731,27 @@ window.App = (function () {
       }
       // 任务排序
       if (!dragTaskId) return;
+      const srcTask = Store.task(dragTaskId);
+      // 悬停折叠分组卡片：整卡并入高亮
+      const gCard = e.target.closest('[data-taskgroup]');
+      if (gCard) {
+        const g = Store.group(gCard.dataset.taskgroup);
+        if (g && srcTask && srcTask.groupId !== g.id) {
+          e.preventDefault();
+          listEl.querySelectorAll('.task-item, [data-taskgroup]').forEach((x) => x.classList.remove('drop-target'));
+          gCard.classList.add('drop-target');
+          return;
+        }
+      }
       const item = e.target.closest('[data-task]'); if (!item || item.dataset.task === dragTaskId) return;
+      // 拖到其他分组的成员卡片上：并入该分组（同组内仍为排序）
+      const dstTask0 = Store.task(item.dataset.task);
+      if (dstTask0 && dstTask0.groupId && srcTask && dstTask0.groupId !== srcTask.groupId) {
+        e.preventDefault();
+        listEl.querySelectorAll('.task-item, [data-taskgroup]').forEach((x) => x.classList.remove('drop-target'));
+        item.classList.add('drop-target');
+        return;
+      }
       e.preventDefault();
       const r = item.getBoundingClientRect();
       const before = e.clientY < r.top + r.height / 2;
@@ -3318,6 +3759,24 @@ window.App = (function () {
       item.classList.add(before ? 'drop-before' : 'drop-after');
     });
     listEl.addEventListener('drop', (e) => {
+      // 合并卡片：拖整格 → 同步重排所有成员任务的对应步骤，保持上下拼接不错位
+      if (dragGroupSort) {
+        const icon = e.target.closest('[data-groupstep]');
+        if (icon && icon.dataset.groupstep === dragGroupSort.groupId) {
+          const srcSlot = dragGroupSort.slot;
+          const dstSlot = Number(icon.dataset.slot);
+          if (dstSlot !== srcSlot) {
+            e.preventDefault();
+            const r = icon.getBoundingClientRect();
+            const before = e.clientX < r.left + r.width / 2;
+            const changed = reorderGroupStepSlots(dragGroupSort.groupId, srcSlot, dstSlot, before);
+            if (changed) { renderTasks(); toast('已调整分组内步骤顺序'); }
+          }
+        }
+        dragGroupSort = null;
+        listEl.querySelectorAll('.step-icon').forEach((x) => x.classList.remove('drop-before', 'drop-after', 'dragging'));
+        return;
+      }
       // 横向图标行内拖拽排序（同任务内）
       if (dragSortStepIconId && dragSortStepIconTaskId) {
         const icon = e.target.closest('.step-icon');
@@ -3402,7 +3861,29 @@ window.App = (function () {
       }
       // 任务排序
       if (!dragTaskId) return;
+      const srcTask = Store.task(dragTaskId);
+      // 放到折叠分组卡片上：并入该分组
+      const gCard = e.target.closest('[data-taskgroup]');
+      if (gCard) {
+        const g = Store.group(gCard.dataset.taskgroup);
+        listEl.querySelectorAll('[data-taskgroup]').forEach((x) => x.classList.remove('drop-target'));
+        if (g && srcTask && srcTask.groupId !== g.id) {
+          e.preventDefault();
+          mergeTaskIntoGroup(srcTask.id, g.id);
+        }
+        dragTaskId = null;
+        return;
+      }
       const item = e.target.closest('[data-task]'); if (!item) return;
+      const dstTask = Store.task(item.dataset.task);
+      // 放到其他分组的成员卡片上：并入该分组
+      if (dstTask && dstTask.groupId && srcTask && dstTask.groupId !== srcTask.groupId) {
+        e.preventDefault();
+        listEl.querySelectorAll('.task-item').forEach((x) => x.classList.remove('drop-target'));
+        mergeTaskIntoGroup(srcTask.id, dstTask.groupId);
+        dragTaskId = null;
+        return;
+      }
       e.preventDefault();
       const src = Store.task(dragTaskId), dst = Store.task(item.dataset.task);
       if (!src || !dst || src.id === dst.id) return;

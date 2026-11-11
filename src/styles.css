@@ -707,6 +707,86 @@ input, textarea { user-select: text; }
   background: var(--accent-soft);
 }
 
+/* ============ 任务分组（合并/展开卡片） ============ */
+.task-group { display: flex; flex-direction: column; gap: 9px; }
+.task-group-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px; margin-left: 2px; border-radius: 10px;
+  cursor: pointer; user-select: none;
+  font-size: 13px; font-weight: 700; color: var(--text-2);
+  transition: background .15s, color .15s;
+}
+.task-group-head:hover { background: var(--surface-2); color: var(--accent); }
+.group-caret { font-size: 11px; width: 14px; text-align: center; color: var(--text-3); flex-shrink: 0; }
+.task-group-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-group-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 500; }
+.task-group-head .icon-btn { margin-left: auto; opacity: .55; }
+.task-group-head:hover .icon-btn { opacity: 1; }
+.task-group-body {
+  display: flex; flex-direction: column; gap: 9px;
+  padding-left: 14px; margin-left: 7px;
+  border-left: 2px solid var(--border);
+}
+.tag.group-tag { background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); }
+.task-item.group-collapsed { cursor: pointer; border-color: var(--gc, var(--border-strong)); overflow: hidden; }
+.task-item.group-collapsed::before {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(135deg, var(--gc, #4f6ef7) 0%, transparent 78%);
+  opacity: .14; z-index: 0; pointer-events: none;
+}
+.task-item.group-collapsed > * { position: relative; z-index: 1; }
+.task-item.group-collapsed.done::before { opacity: .07; }
+/* 分组背景：把各成员任务的卡片封面按 1/n 高度切片拼接（与图标切片同一套规则） */
+.task-item.group-collapsed > .group-cover {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+}
+.task-item.group-collapsed > .group-cover .group-cover-slice {
+  position: absolute; inset: 0;
+  background-size: cover; background-position: center right; background-repeat: no-repeat;
+}
+/* 封面之上的左侧渐变遮罩，保证标题和标签可读 */
+.task-item.group-collapsed > .group-cover::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(90deg, var(--surface) 0%, var(--surface) 42%, transparent 88%);
+}
+.task-item.group-collapsed.drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  background: var(--accent-soft);
+}
+/* 合并卡片里的图标：沿用普通任务卡的毛玻璃圆角容器，单行横向滚动、不换行平铺 */
+.task-item.group-collapsed .group-icons {
+  display: flex; flex-wrap: nowrap; align-items: center; gap: 10px;
+  width: auto; max-width: 300px; flex: 0 0 auto;
+  margin-left: auto;
+  overflow-x: auto; overflow-y: hidden; cursor: grab;
+  padding: 18px 16px 14px; border-radius: 20px;
+  background: rgba(255, 255, 255, .55);
+  border: 1px solid rgba(255, 255, 255, .65);
+  backdrop-filter: blur(14px) saturate(180%);
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .12), inset 0 1px 0 rgba(255, 255, 255, .45);
+  -ms-overflow-style: none; scrollbar-width: none;
+  overscroll-behavior-x: contain; touch-action: pan-x pan-y;
+}
+.task-item.group-collapsed .group-icons::-webkit-scrollbar { display: none; }
+.task-item.group-collapsed .group-icons:active { cursor: grabbing; }
+/* 拼接位：每个 slice 铺满整个图标，靠 clip-path 只露出自己那 1/n 高度条带 */
+.task-item.group-collapsed .group-icons .step-icon.stacked { position: relative; box-shadow: 0 2px 7px rgba(0, 0, 0, .18); }
+.task-item.group-collapsed .group-icons .icon-slice {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  background: var(--surface-3); color: var(--text-2);
+  font-size: 20px; font-weight: 500; line-height: 1;
+  overflow: hidden; user-select: none;
+}
+.task-item.group-collapsed .group-icons .icon-slice img { width: 100%; height: 100%; object-fit: cover; }
+.task-item.group-collapsed .group-icons .icon-slice.done { background: var(--green-soft); color: var(--green); font-size: 22px; }
+/* 完成图标：整体靠 .step-icon.done 的 order:1 排到末尾，显示成绿色 ✓ */
+.task-item.group-collapsed .group-icons .step-icon.stacked.done { opacity: .92; }
+.task-item.group-collapsed .group-icons .icon-slice[data-stepopen] { cursor: pointer; }
+.task-item.group-collapsed .group-icons .icon-slice:hover { filter: brightness(1.06); }
+
 .detail-foot { display: flex; gap: 8px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
 .meta-line { font-size: 11px; color: var(--text-3); margin-top: 10px; line-height: 1.7; }
 

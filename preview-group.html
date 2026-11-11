@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>FocusTodo · 合并卡片图标拼接效果预览</title>
+<link rel="stylesheet" href="src/styles.css">
+<style>
+  body { margin: 0; padding: 34px 28px 60px; background: #f3f6fc; }
+  .demo-wrap { max-width: 1040px; margin: 0 auto; }
+  h1 { font-size: 19px; color: #2b3245; margin: 0 0 6px; }
+  .sub { font-size: 13px; color: #6b7488; margin: 0 0 26px; line-height: 1.7; }
+  .demo-label { font-size: 13px; font-weight: 700; color: #4a5470; margin: 26px 0 10px; display: flex; align-items: center; gap: 8px; }
+  .demo-label b { background: #4f6ef7; color: #fff; border-radius: 5px; padding: 2px 8px; font-size: 11px; }
+  .demo-stage {
+    padding: 16px; border-radius: 16px;
+    background: linear-gradient(120deg, #cfe4fa 0%, #e8f0fb 45%, #f7e6c9 100%);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.7);
+  }
+  /* 演示用图标块：等价于真实的 <img> 图标，铺满 44x44 */
+  .icon-slice .demo, .step-icon > .demo {
+    width: 100%; height: 100%; display: grid; place-items: center;
+    color: #fff; font-size: 20px; font-weight: 700; text-shadow: 0 1px 2px rgba(0,0,0,.25);
+  }
+  .note { font-size: 12px; color: #7b8499; margin-top: 10px; line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="demo-wrap">
+  <h1>合并卡片 · 图标拼接效果</h1>
+  <p class="sub">上：合并前的两张卡片，各 5 个图标。<br>下：合并后仍是 <b>5 个图标位</b>，每个位的上半来自任务一、下半来自任务二；图标区保持单行横向滚动、不换行平铺。</p>
+
+  <div class="demo-label"><b>合并前</b> 两张独立卡片</div>
+  <div class="demo-stage">
+    <div class="task-item" data-task="demo1">
+      <div class="task-head">
+        <span class="checkbox"></span>
+        <div class="task-main">
+          <div class="task-title-row"><div class="task-title">签到任务一</div></div>
+          <div class="task-meta"><span class="tag">🔁 手动重复</span><span class="tag steps">☑ 0/5</span></div>
+        </div>
+        <div class="step-icons-row">
+          <span class="step-icon"><span class="demo" style="background:#4a90d9">🐟</span></span>
+          <span class="step-icon"><span class="demo" style="background:#43a047">🌱</span></span>
+          <span class="step-icon"><span class="demo" style="background:#a9713f">🪵</span></span>
+          <span class="step-icon"><span class="demo" style="background:#f0a04b">⭐</span></span>
+          <span class="step-icon"><span class="demo" style="background:#e5524a">🧧</span></span>
+        </div>
+        <div class="task-actions"></div>
+      </div>
+    </div>
+    <div class="task-item" data-task="demo2" style="margin-top:12px">
+      <div class="task-head">
+        <span class="checkbox"></span>
+        <div class="task-main">
+          <div class="task-title-row"><div class="task-title">签到任务二</div></div>
+          <div class="task-meta"><span class="tag">🔁 手动重复</span><span class="tag steps">☑ 0/5</span></div>
+        </div>
+        <div class="step-icons-row">
+          <span class="step-icon"><span class="demo" style="background:#d94b3f">🧩</span></span>
+          <span class="step-icon"><span class="demo" style="background:#f08a24">🅿️</span></span>
+          <span class="step-icon"><span class="demo" style="background:#1e3a8a">🔵</span></span>
+          <span class="step-icon"><span class="demo" style="background:#e4622a">🛒</span></span>
+          <span class="step-icon"><span class="demo" style="background:#f26b3a">🧍</span></span>
+        </div>
+        <div class="task-actions"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="demo-label"><b>合并后</b> 一张卡片 · 5 个拼接图标位（目标效果）</div>
+  <div class="demo-stage">
+    <div class="task-item group-collapsed" style="--gc:#4f6ef7">
+      <div class="task-head">
+        <span class="checkbox"></span>
+        <div class="task-main">
+          <div class="task-title-row"><div class="task-title">签到任务一</div></div>
+          <div class="task-meta"><span class="tag group-tag">👥 2 个任务</span><span class="tag steps">☑ 0/10</span><span class="tag">🔁 手动重复</span></div>
+        </div>
+        <div class="group-icons">
+          <span class="step-icon stacked">
+            <span class="icon-slice" style="clip-path:inset(0% 0 50% 0)"><span class="demo" style="background:#4a90d9">🐟</span></span>
+            <span class="icon-slice" style="clip-path:inset(50% 0 0% 0)"><span class="demo" style="background:#d94b3f">🧩</span></span>
+          </span>
+          <span class="step-icon stacked">
+            <span class="icon-slice" style="clip-path:inset(0% 0 50% 0)"><span class="demo" style="background:#43a047">🌱</span></span>
+            <span class="icon-slice" style="clip-path:inset(50% 0 0% 0)"><span class="demo" style="background:#f08a24">🅿️</span></span>
+          </span>
+          <span class="step-icon stacked">
+            <span class="icon-slice" style="clip-path:inset(0% 0 50% 0)"><span class="demo" style="background:#a9713f">🪵</span></span>
+            <span class="icon-slice" style="clip-path:inset(50% 0 0% 0)"><span class="demo" style="background:#1e3a8a">🔵</span></span>
+          </span>
+          <span class="step-icon stacked">
+            <span class="icon-slice" style="clip-path:inset(0% 0 50% 0)"><span class="demo" style="background:#f0a04b">⭐</span></span>
+            <span class="icon-slice" style="clip-path:inset(50% 0 0% 0)"><span class="demo" style="background:#e4622a">🛒</span></span>
+          </span>
+          <span class="step-icon stacked">
+            <span class="icon-slice" style="clip-path:inset(0% 0 50% 0)"><span class="demo" style="background:#e5524a">🧧</span></span>
+            <span class="icon-slice" style="clip-path:inset(50% 0 0% 0)"><span class="demo" style="background:#f26b3a">🧍</span></span>
+          </span>
+        </div>
+        <div class="task-actions"><span class="icon-btn always group-caret">▸</span></div>
+      </div>
+    </div>
+    <div class="note">演示用色块代替真实 App 图标；实际程序里每个 slice 是你上传的步骤图标图片，按同样方式裁切拼接。若组内有 3 个任务，则自动变成上 / 中 / 下各 1/3。</div>
+  </div>
+</div>
+</body>
+</html>
